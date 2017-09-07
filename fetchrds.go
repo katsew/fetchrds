@@ -7,20 +7,12 @@ import (
 	"github.com/aws/aws-sdk-go/service/rds"
 	"github.com/urfave/cli"
 	"os"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
 	"time"
 )
-
-const (
-	AUTHOR             = "katsew"
-	APP_VERSION        = "0.1.0"
-	DEFAULT_AWS_REGION = "ap-northeast-1"
-)
-
-var service *rds.RDS
-var outPath string
 
 func worker(targetDbName string, files []*rds.DescribeDBLogFilesDetails) <-chan bool {
 
@@ -46,7 +38,20 @@ func worker(targetDbName string, files []*rds.DescribeDBLogFilesDetails) <-chan 
 					LogFileName:          aws.String(logFileName),
 				})
 				if err != nil {
-					panic(err)
+					errorMessage := err.Error()
+					found := statusCodeLineFinder.FindAllString(errorMessage, -1)
+
+					if len(found) != 1 {
+						panic(err)
+					} else {
+						statusCode = statusCodeFinder.ReplaceAllString(found[0], "$2")
+					}
+					fmt.Printf("Status Code: %s\n", statusCode)
+					if statusCode != "404" {
+						panic(err)
+					} else {
+						fmt.Println(err)
+					}
 				}
 
 				var data string
@@ -86,6 +91,18 @@ func worker(targetDbName string, files []*rds.DescribeDBLogFilesDetails) <-chan 
 
 	return receiver
 }
+
+const (
+	AUTHOR             = "katsew"
+	APP_VERSION        = "0.1.0"
+	DEFAULT_AWS_REGION = "ap-northeast-1"
+)
+
+var service *rds.RDS
+var outPath string
+var statusCodeLineFinder = regexp.MustCompile(`(?m)status code: ([0-9]+)`)
+var statusCodeFinder = regexp.MustCompile(`(.*)([0-9]{3})`)
+var statusCode string
 
 func main() {
 
@@ -132,6 +149,8 @@ func main() {
 
 	app.Action = func(ctx *cli.Context) error {
 
+		start := time.Now()
+
 		targetRds := ctx.Args().First()
 		fmt.Printf("Target RDS Name: %s \n", ctx.Args().First())
 
@@ -165,11 +184,15 @@ func main() {
 		for {
 			_, ok := <-receiver
 			if !ok {
-				fmt.Print("Complete!")
+				fmt.Print("Complete!\n")
 				break
 			}
 
 		}
+
+		elapsed := time.Since(start)
+
+		fmt.Printf("Total execution time: %f", elapsed.Seconds())
 		return nil
 	}
 
